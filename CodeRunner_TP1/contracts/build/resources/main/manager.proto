@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package isel.cd.coderunner.manager;
+option java_multiple_files = true;
+option java_package = "isel.cd.coderunner.manager";
+
+// Contrato a: Registo de RunServer
+// Contrato b: Obtenção de RunServer por um Client
+service ManagerService {
+  // a: RunServer regista-se fornecendo o seu IP:Porto e recebe o IP:Porto do REDIS
+  rpc RegisterRunServer (RegisterRequest) returns (RegisterResponse);
+
+  // b: Client solicita um RunServer disponível (distribuição em Round-Robin)
+  rpc GetRunServer (GetRunServerRequest) returns (GetRunServerResponse);
+}
+
+message RegisterRequest {
+  string server_host = 1;
+  int32 server_port = 2;
+}
+
+message RegisterResponse {
+  string redis_host = 1;
+  int32 redis_port = 2;
+}
+
+message GetRunServerRequest {}
+
+message GetRunServerResponse {
+  string server_host = 1;
+  int32 server_port = 2;
+}
