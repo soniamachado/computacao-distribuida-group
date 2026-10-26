@@ -29,10 +29,11 @@ public class ExecutionServiceImpl extends ExecutionServiceGrpc.ExecutionServiceI
     private final RedisClient redis;
     private final DockerRunner dockerRunner;
     private final ExecutorService workerPool = Executors.newCachedThreadPool();
-    private final Path baseWorkDir = Path.of("requests");
+    private final Path baseWorkDir;
 
     public ExecutionServiceImpl(String host, int port, String redisHost, int redisPort) {
         this.serverAddress = host + ":" + port;
+        this.baseWorkDir = Path.of("requests", String.valueOf(port));
         this.redis = RedisClient.create(redisHost, redisPort);
         this.dockerRunner = new DockerRunner();
         try {
@@ -143,14 +144,15 @@ public class ExecutionServiceImpl extends ExecutionServiceGrpc.ExecutionServiceI
                 .build());
 
         // Se ainda estiver pendente, termina aqui
-        if (statusEnum == ExecutionStatus.PENDENTE) {
+        if (statusEnum == ExecutionStatus.PENDENTE || request.getStatusOnly()) {
             responseObserver.onCompleted();
             return;
         }
 
-        // Se o pedido correu neste servidor, envia os conteúdos de stdout e stderr
+        // Cada RunServer só tem os outputs dos programas que ele executou.
+        boolean executedHere = serverAddress.equals(execServer);
         Path reqDir = baseWorkDir.resolve(requestId);
-        if (Files.exists(reqDir)) {
+        if (executedHere && Files.exists(reqDir)) {
             sendFileStream(reqDir.resolve("out.txt").toFile(), true, statusEnum, exitCode, execServer, responseObserver);
             sendFileStream(reqDir.resolve("err.txt").toFile(), false, statusEnum, exitCode, execServer, responseObserver);
 

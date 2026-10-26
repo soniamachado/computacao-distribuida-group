@@ -39,6 +39,8 @@ message SubmitResponse {
 
 message ResultRequest {
   string request_id = 1;
+  // true: só o estado no Redis, sem stdout/stderr e sem apagar os ficheiros do executor
+  bool status_only = 2;
 }
 
 message ResultChunk {

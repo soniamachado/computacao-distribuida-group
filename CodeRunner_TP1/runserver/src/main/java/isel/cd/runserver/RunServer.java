@@ -9,6 +9,8 @@ import isel.cd.coderunner.manager.RegisterRequest;
 import isel.cd.coderunner.manager.RegisterResponse;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 
 public class RunServer {
 
@@ -19,11 +21,12 @@ public class RunServer {
     private static final int DEFAULT_MANAGER_PORT =  8080;
 
     public static void main(String[] args) throws IOException, InterruptedException {
-        String myHost = DEFAULT_MY_HOST;
         int myPort = args.length > 0 ? Integer.parseInt(args[0]) : DEFAULT_MY_PORT;
         String managerHost = args.length > 1 ? args[1] : DEFAULT_MANAGER_HOST;
         int managerPort = args.length > 2 ? Integer.parseInt(args[2]) : DEFAULT_MANAGER_PORT;
+        String myHost = args.length > 3 ? args[3] : advertisedHost(managerHost, managerPort);
         System.out.printf("[RunServer] A contactar Manager em %s:%d...%n", managerHost, managerPort);
+        System.out.printf("[RunServer] A registar-se como %s:%d%n", myHost, myPort);
 
         ManagedChannel channel = ManagedChannelBuilder.forAddress(managerHost, managerPort)
                 .usePlaintext()
@@ -39,7 +42,10 @@ public class RunServer {
 
         String redisHost = regResponse.getRedisHost();
         int redisPort = regResponse.getRedisPort();
-        System.out.printf("[RunServer] Registado com sucesso. Endereço Redis recebido: %s:%d%n", redisHost, redisPort);
+        if (isLoopback(redisHost) && !isLoopback(managerHost)) {
+            redisHost = managerHost;
+        }
+        System.out.printf("[RunServer] Registado com sucesso. Redis em %s:%d%n", redisHost, redisPort);
 
         channel.shutdown();
 
@@ -57,5 +63,26 @@ public class RunServer {
         }));
 
         server.awaitTermination();
+    }
+
+    private static String advertisedHost(String managerHost, int managerPort) {
+        if (isLoopback(managerHost)) {
+            return DEFAULT_MY_HOST;
+        }
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(managerHost, managerPort), 3000);
+            String address = socket.getLocalAddress().getHostAddress();
+            if (address == null || address.isBlank() || isLoopback(address)) {
+                return DEFAULT_MY_HOST;
+            }
+            return address;
+        } catch (IOException e) {
+            System.err.println("[RunServer] Não foi possível descobrir o IP desta VM; a usar localhost.");
+            return DEFAULT_MY_HOST;
+        }
+    }
+
+    private static boolean isLoopback(String host) {
+        return "localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host) || "::1".equals(host);
     }
 }

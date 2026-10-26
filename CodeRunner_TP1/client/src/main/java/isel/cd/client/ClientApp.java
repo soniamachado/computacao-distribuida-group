@@ -61,9 +61,10 @@ public class ClientApp {
                         GetRunServerResponse runServerInfo = managerStub.getRunServer(GetRunServerRequest.getDefaultInstance());
                         System.out.printf("[Client] RunServer atribuído: %s:%d%n",
                                 runServerInfo.getServerHost(), runServerInfo.getServerPort());
+                        System.out.printf("[Client] A enviar o programa diretamente para o RunServer %s:%d%n",
+                                runServerInfo.getServerHost(), runServerInfo.getServerPort());
 
-                        // 2. Submeter via streaming de cliente e mostrar o resultado.
-                        // A obtenção do resultado é o que apaga os ficheiros no RunServer.
+                        // O programa segue para o RunServer (contrato c). O RunServer grava o estado no Redis.
                         String requestId = submitProgram(
                                 runServerInfo.getServerHost(), runServerInfo.getServerPort(), pyPath, inPath);
                         if (requestId != null) {
@@ -75,7 +76,7 @@ public class ClientApp {
                         System.out.println("Escreve o UUID do pedido:");
                         String reqId = scanner.nextLine().trim();
 
-                        // O estado está no Redis. O stdout fica na opção 1, que é quem obtém o resultado.
+                        // Qualquer RunServer lê o estado no Redis. Não pede os ficheiros de output.
                         GetRunServerResponse runServerInfo = managerStub.getRunServer(GetRunServerRequest.getDefaultInstance());
                         consultState(runServerInfo.getServerHost(), runServerInfo.getServerPort(), reqId);
                     }
@@ -178,7 +179,7 @@ public class ClientApp {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(25);
         Report report;
         while (true) {
-            report = fetchReport(host, port, reqId);
+            report = fetchReport(host, port, reqId, false);
             if (report == null) {
                 return;
             }
@@ -196,7 +197,7 @@ public class ClientApp {
     }
 
     private static void consultState(String host, int port, String reqId) {
-        Report report = fetchReport(host, port, reqId);
+        Report report = fetchReport(host, port, reqId, true);
         if (report == null) {
             return;
         }
@@ -216,7 +217,7 @@ public class ClientApp {
         }
         try {
             System.out.printf("[Client] Output no servidor executor %s%n", report.execServer);
-            Report fromExecutor = fetchReport(parts[0], Integer.parseInt(parts[1]), reqId);
+            Report fromExecutor = fetchReport(parts[0], Integer.parseInt(parts[1]), reqId, false);
             return fromExecutor != null ? fromExecutor : report;
         } catch (NumberFormatException e) {
             System.err.println("Endereço do servidor executor inválido: " + report.execServer);
@@ -240,13 +241,16 @@ public class ClientApp {
         }
     }
 
-    private static Report fetchReport(String host, int port, String reqId) {
+    private static Report fetchReport(String host, int port, String reqId, boolean statusOnly) {
         ManagedChannel channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
         ExecutionServiceGrpc.ExecutionServiceBlockingStub blockingStub = ExecutionServiceGrpc.newBlockingStub(channel);
 
         Iterator<ResultChunk> chunks;
         try {
-            chunks = blockingStub.getResult(ResultRequest.newBuilder().setRequestId(reqId).build());
+            chunks = blockingStub.getResult(ResultRequest.newBuilder()
+                    .setRequestId(reqId)
+                    .setStatusOnly(statusOnly)
+                    .build());
         } catch (Exception e) {
             System.err.println("Erro ao obter resultado: " + e.getMessage());
             channel.shutdown();
