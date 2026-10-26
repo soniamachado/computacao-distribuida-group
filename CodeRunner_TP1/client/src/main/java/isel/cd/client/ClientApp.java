@@ -40,7 +40,7 @@ public class ClientApp {
         while (true) {
             System.out.println("\nComandos disponíveis:");
             System.out.println(" 1 - Submeter programa Python");
-            System.out.println(" 2 - Consultar resultado de pedido");
+            System.out.println(" 2 - Consultar estado do pedido");
             System.out.println(" 0 - Sair");
             System.out.print("> ");
 
@@ -52,7 +52,7 @@ public class ClientApp {
             try {
                 switch (cmd) {
                     case "1" -> {
-                        System.out.print("Caminho do script (.py): ");
+                        System.out.println("Escreve o caminho do ficheiro Python que quer correr:");
                         String pyPath = scanner.nextLine().trim();
                         System.out.print("Caminho do ficheiro de input (opcional, ENTER para vazio): ");
                         String inPath = scanner.nextLine().trim();
@@ -62,17 +62,22 @@ public class ClientApp {
                         System.out.printf("[Client] RunServer atribuído: %s:%d%n",
                                 runServerInfo.getServerHost(), runServerInfo.getServerPort());
 
-                        // 2. Submeter via streaming de cliente
-                        submitProgram(runServerInfo.getServerHost(), runServerInfo.getServerPort(), pyPath, inPath);
+                        // 2. Submeter via streaming de cliente e mostrar o resultado.
+                        // A obtenção do resultado é o que apaga os ficheiros no RunServer.
+                        String requestId = submitProgram(
+                                runServerInfo.getServerHost(), runServerInfo.getServerPort(), pyPath, inPath);
+                        if (requestId != null) {
+                            showResultWhenReady(
+                                    runServerInfo.getServerHost(), runServerInfo.getServerPort(), requestId);
+                        }
                     }
                     case "2" -> {
-                        System.out.print("ID do Pedido (UUID): ");
+                        System.out.println("Escreve o UUID do pedido:");
                         String reqId = scanner.nextLine().trim();
 
-                        // Qualquer RunServer lê o estado no Redis partilhado.
-                        // O stdout/stderr só existem no nó que executou o contentor.
+                        // O estado está no Redis. O stdout fica na opção 1, que é quem obtém o resultado.
                         GetRunServerResponse runServerInfo = managerStub.getRunServer(GetRunServerRequest.getDefaultInstance());
-                        consultResult(runServerInfo.getServerHost(), runServerInfo.getServerPort(), reqId);
+                        consultState(runServerInfo.getServerHost(), runServerInfo.getServerPort(), reqId);
                     }
                     default -> System.out.println("Comando inválido!");
                 }
@@ -85,7 +90,7 @@ public class ClientApp {
         System.out.println("Cliente terminado.");
     }
 
-    private static void submitProgram(String host, int port, String pyPath, String inPath) throws Exception {
+    private static String submitProgram(String host, int port, String pyPath, String inPath) throws Exception {
         ManagedChannel channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
         ExecutionServiceGrpc.ExecutionServiceStub asyncStub = ExecutionServiceGrpc.newStub(channel);
 
@@ -117,7 +122,7 @@ public class ClientApp {
         if (!pyFile.exists()) {
             System.err.println("Ficheiro Python não encontrado: " + pyPath);
             channel.shutdown();
-            return;
+            return null;
         }
 
         // Enviar metadados
@@ -141,9 +146,12 @@ public class ClientApp {
 
         if (!finishLatch.await(30, TimeUnit.SECONDS)) {
             System.err.println("Timeout à espera de resposta do servidor.");
+            channel.shutdown();
+            return null;
         }
 
         channel.shutdown();
+        return requestId.get();
     }
 
     private static void sendFileInChunks(File file, StreamObserver<ProgramChunk> stream, boolean isProgram) throws IOException {
@@ -165,32 +173,58 @@ public class ClientApp {
 
     private record Report(ExecutionStatus status, int exitCode, String execServer, String stdout, String stderr) {}
 
-    private static void consultResult(String host, int port, String reqId) {
+    private static void showResultWhenReady(String host, int port, String reqId) throws InterruptedException {
+        System.out.println("[Client] À espera do resultado...");
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(25);
+        Report report;
+        while (true) {
+            report = fetchReport(host, port, reqId);
+            if (report == null) {
+                return;
+            }
+            if (report.status != ExecutionStatus.PENDENTE && report.status != ExecutionStatus.UNKNOWN) {
+                break;
+            }
+            if (System.nanoTime() >= deadline) {
+                printReport(reqId, report);
+                return;
+            }
+            Thread.sleep(500);
+        }
+        // Esta leitura, já com o estado final, é a que apaga out.txt, err.txt e a pasta do pedido.
+        printReport(reqId, resolveExecutor(host, port, reqId, report));
+    }
+
+    private static void consultState(String host, int port, String reqId) {
         Report report = fetchReport(host, port, reqId);
         if (report == null) {
             return;
         }
+        System.out.printf("%nEstado do pedido [%s]: %s%n", reqId, report.status);
+    }
 
-        // O primeiro nó devolve o estado (Redis). Se não foi ele a executar,
-        // o stdout/stderr estão no RunServer indicado em execution_server.
-        if (report.status != ExecutionStatus.PENDENTE
-                && report.status != ExecutionStatus.UNKNOWN
-                && !report.execServer.isBlank()
-                && !report.execServer.equals(host + ":" + port)) {
-            String[] parts = report.execServer.split(":");
-            if (parts.length == 2) {
-                try {
-                    System.out.printf("[Client] Output no servidor executor %s%n", report.execServer);
-                    Report fromExecutor = fetchReport(parts[0], Integer.parseInt(parts[1]), reqId);
-                    if (fromExecutor != null) {
-                        report = fromExecutor;
-                    }
-                } catch (NumberFormatException e) {
-                    System.err.println("Endereço do servidor executor inválido: " + report.execServer);
-                }
-            }
+    private static Report resolveExecutor(String host, int port, String reqId, Report report) {
+        if (report.status == ExecutionStatus.PENDENTE
+                || report.status == ExecutionStatus.UNKNOWN
+                || report.execServer.isBlank()
+                || report.execServer.equals(host + ":" + port)) {
+            return report;
         }
+        String[] parts = report.execServer.split(":");
+        if (parts.length != 2) {
+            return report;
+        }
+        try {
+            System.out.printf("[Client] Output no servidor executor %s%n", report.execServer);
+            Report fromExecutor = fetchReport(parts[0], Integer.parseInt(parts[1]), reqId);
+            return fromExecutor != null ? fromExecutor : report;
+        } catch (NumberFormatException e) {
+            System.err.println("Endereço do servidor executor inválido: " + report.execServer);
+            return report;
+        }
+    }
 
+    private static void printReport(String reqId, Report report) {
         System.out.printf("%n=== Relatório do Pedido [%s] ===%n", reqId);
         System.out.println("Estado           : " + report.status);
         System.out.println("Servidor Executor: " + report.execServer);
