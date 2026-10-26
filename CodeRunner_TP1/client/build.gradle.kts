@@ -15,3 +15,7 @@ dependencies {
 application {
     mainClass.set("isel.cd.client.ClientApp")
 }
+
+tasks.named<JavaExec>("run") {
+    standardInput = System.`in`
+}

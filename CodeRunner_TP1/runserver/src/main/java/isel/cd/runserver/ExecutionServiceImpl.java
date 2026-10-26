@@ -9,8 +9,7 @@ import isel.cd.coderunner.execution.ProgramChunk;
 import isel.cd.coderunner.execution.ResultChunk;
 import isel.cd.coderunner.execution.ResultRequest;
 import isel.cd.coderunner.execution.SubmitResponse;
-import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.RedisClient;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -27,14 +26,14 @@ import java.util.concurrent.Executors;
 public class ExecutionServiceImpl extends ExecutionServiceGrpc.ExecutionServiceImplBase {
 
     private final String serverAddress;
-    private final JedisPool jedisPool;
+    private final RedisClient redis;
     private final DockerRunner dockerRunner;
     private final ExecutorService workerPool = Executors.newCachedThreadPool();
     private final Path baseWorkDir = Path.of("requests");
 
     public ExecutionServiceImpl(String host, int port, String redisHost, int redisPort) {
         this.serverAddress = host + ":" + port;
-        this.jedisPool = new JedisPool(redisHost, redisPort);
+        this.redis = RedisClient.create(redisHost, redisPort);
         this.dockerRunner = new DockerRunner();
         try {
             Files.createDirectories(baseWorkDir);
@@ -78,14 +77,12 @@ public class ExecutionServiceImpl extends ExecutionServiceGrpc.ExecutionServiceI
                     Files.write(reqDir.resolve("input.txt"), inputBuffer.toByteArray());
 
                     // Registo imediato no Redis: estado PENDENTE com TTL de 24h (86400s)
-                    try (Jedis jedis = jedisPool.getResource()) {
-                        String key = "pedido:" + requestId;
-                        jedis.hset(key, Map.of(
-                                "estado", "PENDENTE",
-                                "servidor", serverAddress
-                        ));
-                        jedis.expire(key, 86400);
-                    }
+                    String key = "pedido:" + requestId;
+                    redis.hset(key, Map.of(
+                            "estado", "PENDENTE",
+                            "servidor", serverAddress
+                    ));
+                    redis.expire(key, 86400);
 
                     // Resposta imediata ao cliente com o ID do pedido
                     responseObserver.onNext(SubmitResponse.newBuilder().setRequestId(requestId).build());
@@ -105,14 +102,12 @@ public class ExecutionServiceImpl extends ExecutionServiceGrpc.ExecutionServiceI
         DockerRunner.ExecutionOutcome outcome = dockerRunner.runCode(requestId, reqDir);
 
         // Atualização do estado no Redis
-        try (Jedis jedis = jedisPool.getResource()) {
-            String key = "pedido:" + requestId;
-            jedis.hset(key, Map.of(
-                    "estado", outcome.status(),
-                    "exitCode", String.valueOf(outcome.exitCode()),
-                    "servidor", serverAddress
-            ));
-        }
+        String key = "pedido:" + requestId;
+        redis.hset(key, Map.of(
+                "estado", outcome.status(),
+                "exitCode", String.valueOf(outcome.exitCode()),
+                "servidor", serverAddress
+        ));
         System.out.printf("[RunServer] Pedido %s concluído com estado %s (exit: %d)%n",
                 requestId, outcome.status(), outcome.exitCode());
     }
@@ -122,9 +117,7 @@ public class ExecutionServiceImpl extends ExecutionServiceGrpc.ExecutionServiceI
         String requestId = request.getRequestId();
         Map<String, String> data;
 
-        try (Jedis jedis = jedisPool.getResource()) {
-            data = jedis.hgetAll("pedido:" + requestId);
-        }
+        data = redis.hgetAll("pedido:" + requestId);
 
         if (data == null || data.isEmpty()) {
             responseObserver.onError(Status.NOT_FOUND.withDescription("Pedido desconhecido").asRuntimeException());

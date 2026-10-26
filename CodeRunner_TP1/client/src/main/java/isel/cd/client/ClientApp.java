@@ -69,9 +69,10 @@ public class ClientApp {
                         System.out.print("ID do Pedido (UUID): ");
                         String reqId = scanner.nextLine().trim();
 
-                        // Pede um RunServer qualquer para consultar o estado inicial no Redis
+                        // Qualquer RunServer lê o estado no Redis partilhado.
+                        // O stdout/stderr só existem no nó que executou o contentor.
                         GetRunServerResponse runServerInfo = managerStub.getRunServer(GetRunServerRequest.getDefaultInstance());
-                        getResult(runServerInfo.getServerHost(), runServerInfo.getServerPort(), reqId);
+                        consultResult(runServerInfo.getServerHost(), runServerInfo.getServerPort(), reqId);
                     }
                     default -> System.out.println("Comando inválido!");
                 }
@@ -162,7 +163,50 @@ public class ClientApp {
         }
     }
 
-    private static void getResult(String host, int port, String reqId) {
+    private record Report(ExecutionStatus status, int exitCode, String execServer, String stdout, String stderr) {}
+
+    private static void consultResult(String host, int port, String reqId) {
+        Report report = fetchReport(host, port, reqId);
+        if (report == null) {
+            return;
+        }
+
+        // O primeiro nó devolve o estado (Redis). Se não foi ele a executar,
+        // o stdout/stderr estão no RunServer indicado em execution_server.
+        if (report.status != ExecutionStatus.PENDENTE
+                && report.status != ExecutionStatus.UNKNOWN
+                && !report.execServer.isBlank()
+                && !report.execServer.equals(host + ":" + port)) {
+            String[] parts = report.execServer.split(":");
+            if (parts.length == 2) {
+                try {
+                    System.out.printf("[Client] Output no servidor executor %s%n", report.execServer);
+                    Report fromExecutor = fetchReport(parts[0], Integer.parseInt(parts[1]), reqId);
+                    if (fromExecutor != null) {
+                        report = fromExecutor;
+                    }
+                } catch (NumberFormatException e) {
+                    System.err.println("Endereço do servidor executor inválido: " + report.execServer);
+                }
+            }
+        }
+
+        System.out.printf("%n=== Relatório do Pedido [%s] ===%n", reqId);
+        System.out.println("Estado           : " + report.status);
+        System.out.println("Servidor Executor: " + report.execServer);
+        System.out.println("Código de Saída  : " + report.exitCode);
+
+        if (!report.stdout.isEmpty()) {
+            System.out.println("--- STDOUT ---");
+            System.out.println(report.stdout);
+        }
+        if (!report.stderr.isEmpty()) {
+            System.out.println("--- STDERR ---");
+            System.out.println(report.stderr);
+        }
+    }
+
+    private static Report fetchReport(String host, int port, String reqId) {
         ManagedChannel channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
         ExecutionServiceGrpc.ExecutionServiceBlockingStub blockingStub = ExecutionServiceGrpc.newBlockingStub(channel);
 
@@ -172,7 +216,7 @@ public class ClientApp {
         } catch (Exception e) {
             System.err.println("Erro ao obter resultado: " + e.getMessage());
             channel.shutdown();
-            return;
+            return null;
         }
 
         StringBuilder stdout = new StringBuilder();
@@ -181,34 +225,27 @@ public class ClientApp {
         int exitCode = -1;
         String execServer = "";
 
-        while (chunks.hasNext()) {
-            ResultChunk chunk = chunks.next();
-            status = chunk.getStatus();
-            exitCode = chunk.getExitCode();
-            execServer = chunk.getExecutionServer();
+        try {
+            while (chunks.hasNext()) {
+                ResultChunk chunk = chunks.next();
+                status = chunk.getStatus();
+                exitCode = chunk.getExitCode();
+                execServer = chunk.getExecutionServer();
 
-            if (chunk.hasStdoutChunk()) {
-                stdout.append(chunk.getStdoutChunk().toString(StandardCharsets.UTF_8));
+                if (chunk.hasStdoutChunk()) {
+                    stdout.append(chunk.getStdoutChunk().toString(StandardCharsets.UTF_8));
+                }
+                if (chunk.hasStderrChunk()) {
+                    stderr.append(chunk.getStderrChunk().toString(StandardCharsets.UTF_8));
+                }
             }
-            if (chunk.hasStderrChunk()) {
-                stderr.append(chunk.getStderrChunk().toString(StandardCharsets.UTF_8));
-            }
+        } catch (Exception e) {
+            System.err.println("Erro ao obter resultado: " + e.getMessage());
+            channel.shutdown();
+            return null;
         }
 
         channel.shutdown();
-
-        System.out.printf("%n=== Relatório do Pedido [%s] ===%n", reqId);
-        System.out.println("Estado           : " + status);
-        System.out.println("Servidor Executor: " + execServer);
-        System.out.println("Código de Saída  : " + exitCode);
-
-        if (!stdout.isEmpty()) {
-            System.out.println("--- STDOUT ---");
-            System.out.println(stdout);
-        }
-        if (!stderr.isEmpty()) {
-            System.out.println("--- STDERR ---");
-            System.out.println(stderr);
-        }
+        return new Report(status, exitCode, execServer, stdout.toString(), stderr.toString());
     }
 }
