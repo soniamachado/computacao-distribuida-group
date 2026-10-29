@@ -40,7 +40,8 @@ public class ClientApp {
         while (true) {
             System.out.println("\nComandos disponíveis:");
             System.out.println(" 1 - Submeter programa Python");
-            System.out.println(" 2 - Consultar estado do pedido");
+            System.out.println(" 2 - Obter resultado do pedido");
+            System.out.println(" 3 - Mostrar estado");
             System.out.println(" 0 - Sair");
             System.out.print("> ");
 
@@ -67,17 +68,27 @@ public class ClientApp {
                         String requestId = submitProgram(
                                 runServerInfo.getServerHost(), runServerInfo.getServerPort(), pyPath, inPath);
                         if (requestId != null) {
-                            showResultWhenReady(
-                                    runServerInfo.getServerHost(), runServerInfo.getServerPort(), requestId);
+                            // Só o estado: não lê out.txt, por isso os ficheiros ficam até à opção 2.
+                            Report report = fetchReport(
+                                    runServerInfo.getServerHost(), runServerInfo.getServerPort(), requestId, true);
+                            if (report != null) {
+                                System.out.printf("%nEstado:          %s%n", report.status);
+                            }
                         }
                     }
                     case "2" -> {
                         System.out.println("Escreve o UUID do pedido:");
                         String reqId = scanner.nextLine().trim();
 
-                        // Qualquer RunServer lê o estado no Redis. Não pede os ficheiros de output.
                         GetRunServerResponse runServerInfo = managerStub.getRunServer(GetRunServerRequest.getDefaultInstance());
-                        consultState(runServerInfo.getServerHost(), runServerInfo.getServerPort(), reqId);
+                        obtainResult(runServerInfo.getServerHost(), runServerInfo.getServerPort(), reqId);
+                    }
+                    case "3" -> {
+                        System.out.println("Escreve o UUID do pedido:");
+                        String reqId = scanner.nextLine().trim();
+
+                        GetRunServerResponse runServerInfo = managerStub.getRunServer(GetRunServerRequest.getDefaultInstance());
+                        showState(runServerInfo.getServerHost(), runServerInfo.getServerPort(), reqId);
                     }
                     default -> System.out.println("Comando inválido!");
                 }
@@ -102,6 +113,7 @@ public class ClientApp {
             public void onNext(SubmitResponse resp) {
                 requestId.set(resp.getRequestId());
                 System.out.printf("%n[Sucesso] Pedido submetido! ID do Pedido: %s%n", resp.getRequestId());
+                System.out.println("Deve guardar a chave do pedido UUID.");
             }
 
             @Override
@@ -173,29 +185,7 @@ public class ClientApp {
 
     private record Report(ExecutionStatus status, int exitCode, String execServer, String stdout, String stderr) {}
 
-    private static void showResultWhenReady(String host, int port, String reqId) throws InterruptedException {
-        System.out.println("[Client] À espera do resultado...");
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(25);
-        Report report;
-        while (true) {
-            report = fetchReport(host, port, reqId, false);
-            if (report == null) {
-                return;
-            }
-            if (report.status != ExecutionStatus.PENDENTE && report.status != ExecutionStatus.UNKNOWN) {
-                break;
-            }
-            if (System.nanoTime() >= deadline) {
-                printReport(reqId, report);
-                return;
-            }
-            Thread.sleep(500);
-        }
-        // Esta leitura, já com o estado final, é a que apaga out.txt, err.txt e a pasta do pedido.
-        printReport(reqId, resolveExecutor(host, port, reqId, report));
-    }
-
-    private static void consultState(String host, int port, String reqId) {
+    private static void showState(String host, int port, String reqId) {
         Report report = fetchReport(host, port, reqId, true);
         if (report == null) {
             return;
@@ -203,24 +193,35 @@ public class ClientApp {
         System.out.printf("%nEstado do pedido [%s]: %s%n", reqId, report.status);
     }
 
-    private static Report resolveExecutor(String host, int port, String reqId, Report report) {
-        if (report.status == ExecutionStatus.PENDENTE
-                || report.status == ExecutionStatus.UNKNOWN
-                || report.execServer.isBlank()
-                || report.execServer.equals(host + ":" + port)) {
-            return report;
+    private static void obtainResult(String host, int port, String reqId) {
+        Report report = fetchReport(host, port, reqId, true);
+        if (report == null) {
+            return;
         }
-        String[] parts = report.execServer.split(":");
-        if (parts.length != 2) {
-            return report;
+        if (report.status == ExecutionStatus.PENDENTE || report.status == ExecutionStatus.UNKNOWN) {
+            System.out.printf("%nEstado do pedido [%s]: %s%n", reqId, report.status);
+            return;
         }
-        try {
-            System.out.printf("[Client] Output no servidor executor %s%n", report.execServer);
-            Report fromExecutor = fetchReport(parts[0], Integer.parseInt(parts[1]), reqId, false);
-            return fromExecutor != null ? fromExecutor : report;
-        } catch (NumberFormatException e) {
-            System.err.println("Endereço do servidor executor inválido: " + report.execServer);
-            return report;
+
+        String execHost = host;
+        int execPort = port;
+        if (!report.execServer.isBlank() && !report.execServer.equals(host + ":" + port)) {
+            String[] parts = report.execServer.split(":");
+            if (parts.length == 2) {
+                try {
+                    execHost = parts[0];
+                    execPort = Integer.parseInt(parts[1]);
+                    System.out.printf("[Client] Output no servidor executor %s%n", report.execServer);
+                } catch (NumberFormatException e) {
+                    System.err.println("Endereço do servidor executor inválido: " + report.execServer);
+                }
+            }
+        }
+
+        // Esta leitura traz o texto do programa e apaga out.txt, err.txt e a pasta do pedido.
+        Report full = fetchReport(execHost, execPort, reqId, false);
+        if (full != null) {
+            printReport(reqId, full);
         }
     }
 
