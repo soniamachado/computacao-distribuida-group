@@ -54,8 +54,7 @@ public class ClientApp {
                     case "1" -> {
                         System.out.println("Escreve o caminho do ficheiro Python que quer correr:");
                         String pyPath = scanner.nextLine().trim();
-                        System.out.print("Caminho do ficheiro de input (opcional, ENTER para vazio): ");
-                        String inPath = scanner.nextLine().trim();
+                        String inPath = "";
 
                         // 1. Obter RunServer junto do Manager (Round-Robin)
                         GetRunServerResponse runServerInfo = managerStub.getRunServer(GetRunServerRequest.getDefaultInstance());
