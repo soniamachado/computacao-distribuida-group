@@ -1,8 +1,0 @@
-.gradle/
-.idea/
-build/
-**/build/
-bin/
-**/*.class
-requests/
-*.iml
