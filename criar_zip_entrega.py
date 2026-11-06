@@ -9,8 +9,8 @@ import zipfile
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent
-PROJETO = RAIZ / "CodeRunner_TP1"
-SAIDA = RAIZ / "CodeRunner_TP1_entrega.zip"
+PROJETO = RAIZ / "CodeRunner_TP1_alicia"
+SAIDA = RAIZ / "CodeRunner_TP1_Grupo02_entrega.zip"
 
 # Nomes de pastas que não vão no zip, em qualquer profundidade.
 PASTAS_EXCLUIDAS = {".gradle", "build", "requests", ".idea", "bin", "__pycache__"}

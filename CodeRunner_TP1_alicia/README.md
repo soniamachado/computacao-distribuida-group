@@ -10,10 +10,11 @@
 
 ##  Identificação do Grupo
 
-| Número | Nome do Estudante | Contacto / Email |
-| :---: | :--- | :--- |
-| **AXXXXX** | Emanuel [Apelido] | aluno@alunos.isel.pt |
-| **AXXXXX** | [Nome do Colega] | aluno2@alunos.isel.pt |
+| Número | Nome do Estudante 
+
+| **A53473** | Alicia Silva 
+| **A54365** | Carmen Gomes 
+| **A54926** | Sónia Machado
 
 ---
 
@@ -103,42 +104,51 @@ Conforme estipulado nos requisitos não funcionais do guião:
 ### Passo 1: Iniciar o contentor REDIS
 Caso já tenha o contentor criado:
 ```bash
-docker start my-redis
+docker start ServerRedis
 ```
 *(Caso necessite de criar de raiz)*:
 ```bash
-docker run -d --name my-redis -p 6000:6379 redis:alpine
+ docker run -d --name ServerRedis -p 6000:6379 redis
 ```
 
-### Passo 2: Iniciar o ManagerServer
+### Passo 2: Iniciar o ManagerServer - VM1
 Na raiz do projeto (`CodeRunner`), execute num terminal dedicado:
 ```powershell
-./gradlew :manager:run
+./gradlew :manager:run --console=plain --args="8080 localhost 6000"
 ```
 *Saída esperada:* `[ManagerServer] Em escuta no porto 8080...`
 
-### Passo 3: Iniciar os RunServers (Múltiplos Nós Paralelos)
+### Passo 3: Iniciar os RunServers (Múltiplos Nós Paralelos) - VM2 e VM3
 
-* **Nó 1 (Porto 9002 por omissão):**
-  Num segundo terminal:
+* **Nó 1 (Porto 9002 por omissão) VM2:**
+  Num terminal:
   ```powershell
-  ./gradlew :runserver:run
+  cd ~/computacao-distribuida-group/CodeRunner_TP1_alicia
+./gradlew :runserver:run --console=plain --args="9002 IP_INTERNO_VM1 8080 IP_EXTERNO_VM2"
   ```
   *(Ou passando explicitamente: `./gradlew :runserver:run --args="9002"`)*
 
-* **Nó 2 (Porto 9003 dinâmico):**
-  Num terceiro terminal:
+* **Nó 2 (Porto 9003 dinâmico) VM2:**
+  Num segundo terminal:
   ```powershell
-  ./gradlew :runserver:run --args="9003"
+cd ~/computacao-distribuida-group/CodeRunner_TP1_alicia
+./gradlew :runserver:run --console=plain --args="9003 IP_INTERNO_VM1 8080 IP_EXTERNO_VM2"
   ```
   *Saída esperada em ambos:* `[RunServer] Registado com sucesso (...) Pronto a receber pedidos no porto XXXX.`
 
-### Passo 4: Iniciar o Cliente CLI
+* **Nó 3 (Porto 9002 omissao) VM3:**
+  Num terminal:
+cd ~/computacao-distribuida-group/CodeRunner_TP1_alicia
+./gradlew :runserver:run --console=plain --args="9002 IP_INTERNO_VM1 8080 IP_EXTERNO_VM3"
+
+
+### Passo 4: Iniciar o Cliente CLI: LOCALHOST
 Num quarto terminal:
 ```powershell
 ./gradlew :client:run
 ```
-
+cd /computacaodDstribuida_groupproject/CodeRunner_TP1_alicia
+./gradlew :client:run --console=plain --args="IP_EXTERNO_VM1 8080"
 ---
 
 ##  5. Validação das Funcionalidades e Demonstração
@@ -199,4 +209,4 @@ Para gerar o ficheiro ZIP final em conformidade com as regras de submissão do M
    ./gradlew clean
    ```
 2. Garantir que as diretorias `.gradle/`, `.idea/` e `build/` não são adicionadas ao arquivo comprimido.
-3. Compactar a raiz do projeto para o arquivo de entrega final (`CodeRunner-GrupoXX.zip`).
+3. Compactar a raiz do projeto para o arquivo de entrega final (`CodeRunner_TP1_Grupo02_entrega.zip`).

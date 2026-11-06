@@ -1,4 +1,3 @@
-
 package isel.cd.client;
 
 import com.google.protobuf.ByteString;
@@ -58,6 +57,7 @@ public class ClientApp {
             try {
                 switch (cmd) {
                     case "1" -> {
+                        // Pedir o ficheiro Python
                         System.out.println("Escreve o caminho do ficheiro Python que quer correr:");
                         String pyPath = scanner.nextLine().trim();
 
@@ -68,6 +68,22 @@ public class ClientApp {
                                 || !pyFile.getName().toLowerCase().endsWith(".py")) {
                             System.err.println("Ficheiro Python inválido ou inacessível: " + pyPath);
                             break;
+                        }
+
+
+                        // Pedir o ficheiro de entrada (opcional)
+                        System.out.println("Escreve o caminho do ficheiro de entrada .txt (Enter para ignorar):");
+                        String inPath = scanner.nextLine().trim();
+
+                        if (!inPath.isBlank()) {
+                            File inputFile = new File(inPath);
+
+                            if (!inputFile.isFile()
+                                    || !inputFile.canRead()
+                                    || !inputFile.getName().toLowerCase().endsWith(".txt")) {
+                                System.err.println("Ficheiro de entrada inválido ou inacessível: " + inPath);
+                                break;
+                            }
                         }
 
                         GetRunServerResponse runServerInfo =
@@ -85,7 +101,7 @@ public class ClientApp {
                                 runServerInfo.getServerHost(),
                                 runServerInfo.getServerPort(),
                                 pyPath,
-                                ""
+                                inPath
                         );
 
                         if (requestId != null) {
